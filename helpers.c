@@ -145,6 +145,11 @@ struct wl_buffer *hello_create_buffer(struct wl_shm_pool *pool, unsigned width, 
         return buffer;
 }
 
+void hello_free_buffer(struct wl_buffer *buffer)
+{
+	wl_buffer_destroy(buffer);
+}
+
 static void shell_surface_ping(void *data, struct wl_shell_surface *shell_surface, uint32_t serial)
 {
 	wl_shell_surface_pong(shell_surface, serial);
@@ -206,9 +211,12 @@ void hello_bind_buffer(struct wl_buffer *buffer, struct wl_shell_surface *shell_
 	wl_surface_commit(surface);
 }
 
-void hello_free_buffer(struct wl_buffer *buffer)
+void hello_set_button_callback(struct wl_shell_surface *shell_surface, void (*callback)(uint32_t))
 {
-	wl_buffer_destroy(buffer);
+	struct wl_surface* surface;
+
+	surface = wl_shell_surface_get_user_data(shell_surface);
+	wl_surface_set_user_data(surface, callback);
 }
 
 struct pointer_data {
@@ -262,14 +270,6 @@ void hello_free_cursor(void)
 	wl_surface_destroy(data->surface);
 	free(data);
 	wl_pointer_set_user_data(pointer, NULL);
-}
-
-void hello_set_button_callback(struct wl_shell_surface *shell_surface, void (*callback)(uint32_t))
-{
-	struct wl_surface* surface;
-
-	surface = wl_shell_surface_get_user_data(shell_surface);
-	wl_surface_set_user_data(surface, callback);
 }
 
 static void pointer_enter
