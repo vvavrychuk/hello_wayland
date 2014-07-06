@@ -1,0 +1,158 @@
+<p><strong>TLDR</strong></p>
+<p>I've written a hello world for wayland. It's available at:</p><p><a title="Hello wayland github repository">https://github.com/hdante/hello_wayland</a>
+</p>
+<p><strong>Introduction</strong></p>
+<p><a href="https://hdante.files.wordpress.com/2014/07/hello_wayland_screenshot1.png"><img src="http://hdante.files.wordpress.com/2014/07/hello_wayland_screenshot1.png?w=300" alt="hello_wayland_screenshot" width="300" height="216" class="alignright size-medium wp-image-128" /></a>From the end user perspective it's very easy to understand what wayland is: it's a new window system with the display server and window manager merged <a href="http://wayland.freedesktop.org/architecture.html">[1]</a>. From a technical point of view, the goal of wayland is to break from legacy and implement an efficient window system with modern design for modern graphics usage, solving long standing efficiency problems and specific corner cases present in the X Window System <a href="http://mirror.linux.org.au/linux.conf.au/2013/ogv/The_real_story_behind_Wayland_and_X.ogv">[2]</a>. This tutorial shows how to implement a hello world client application for wayland, explaining essential wayland concepts and all the steps required to create any fully working wayland client. The hello world application does not use any GUI toolkit, it directly uses the low level wayland protocol, so that the fundamental parts of wayland are described. The tutorial is a result of my own study of the wayland protocol. The tutorial is divided into 2 posts. This is the first post, that will explain all the concepts and the high level part of the hello world application.</p>
+<p><strong>What is wayland again ?</strong></p>
+<p>The complete design for the wayland window system is split into several layers. If you download the wayland library source code <a href="http://cgit.freedesktop.org/wayland/wayland/tree/">[3]</a>, or take a look at the wayland API <a href="http://wayland.freedesktop.org/docs/html/">[4]</a>, you will notice two layers:</p>
+<ol>
+<li>The most basic layer is an implementation of inter process communication functionality, together with a few utilities, like a main loop dispatcher and some data types. This is nearly all code present in the wayland library (everything inside the src directory <a href="http://cgit.freedesktop.org/wayland/wayland/tree/src">[5]</a>) and has almost no code related to window systems.</li>
+<li>The second layer is the window system protocol. Its description is located in a single file, protocol/wayland.xml <a href="http://cgit.freedesktop.org/wayland/wayland/tree/protocol/wayland.xml">[6]</a>, which should be considered the protocol written in an interface definition language. The IDL file can be passed through the <code>wayland-scanner</code> tool to generate proxy methods in <code>wayland-client-protocol.h</code> and <code>wayland-server-protocol.h</code>. The protocol defines the essential functionality for client applications and the display server, like providing access to input devices and registering shared buffers for displaying on the screen. The wayland library does not implement this protocol. Instead, implementation is split into a third separate layer. In particular the reference server side implementation is part of the weston display server <a href="http://cgit.freedesktop.org/wayland/weston/tree/">[7]</a>, which in turn defines additional layers, both server and client side, to complete the set of wayland protocols. We don't need to know anything about weston for the hello world application, though, the IDL file has all we need to implement the client-side protocol.</li>
+</ol>
+<p>From the description of the wayland library given above, we have successfully found a third definition of wayland, it's a (special purpose) IPC library, not unlike the D-Bus library, instead of a display server, and this lack of definition for what wayland really is, and how well defined the wayland protocols are and where, is present everywhere. I believe it's common for people not understand what wayland is even after reading official documentation. I think that the three definitions given clarify the "what is wayland" problem and each can be used for different contexts.</p>
+<p><strong>Hello, World!</strong></p>
+<p>The introduction ended up rather large, so lets see the main hello world code at once:</p>
+[sourcecode language="c"]
+#include <fcntl.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <wayland-client.h>
+
+#include "helpers.h"
+
+static const unsigned WIDTH = 320;
+static const unsigned HEIGHT = 200;
+static const unsigned CURSOR_WIDTH = 100;
+static const unsigned CURSOR_HEIGHT = 59;
+static const int32_t CURSOR_HOT_SPOT_X = 10;
+static const int32_t CURSOR_HOT_SPOT_Y = 35;
+
+volatile static bool done = false;
+
+void on_button(uint32_t button)
+{
+    done = true;
+}
+
+int main(void)
+{
+    struct wl_buffer *buffer;
+    struct wl_shm_pool *pool;
+    struct wl_shell_surface *surface;
+    int image;
+
+    hello_setup_wayland();
+
+    image = open("images.bin", O_RDWR);
+
+    if (image < 0) {
+        perror("Error opening surface image");
+        return EXIT_FAILURE;
+    }
+
+    pool = hello_create_memory_pool(image);
+    surface = hello_create_surface();
+    buffer = hello_create_buffer(pool, WIDTH, HEIGHT);
+    hello_bind_buffer(buffer, surface);
+    hello_set_cursor_from_pool(pool, CURSOR_WIDTH,
+        CURSOR_HEIGHT, CURSOR_HOT_SPOT_X, CURSOR_HOT_SPOT_Y);
+    hello_set_button_callback(surface, on_button);
+
+    while (!done) {
+        if (wl_display_dispatch(display) < 0) {
+            perror("Main loop error");
+            done = true;
+        }
+    }
+
+    fprintf(stderr, "Exiting sample wayland client...\n");
+
+    hello_free_cursor();
+    hello_free_buffer(buffer);
+    hello_free_surface(surface);
+    hello_free_memory_pool(pool);
+    close(image);
+    hello_cleanup_wayland();
+
+    return EXIT_SUCCESS;
+}
+[/sourcecode]
+
+<p>The wayland protocol is verbose, so I separated the code into two parts, one containing the protocol details and another, the main module, shown above, containing the high level "hello world" implementation. The <code>main()</code> function is written at algorithmic granularity and represents the complete set of steps necessary to communicate with the display server to display the hello world window and accept input from the pointer device, closing the application when clicked. A description of the relevant parts of the code follows:</p>
+[sourcecode language="c" firstline="8"]
+#include "helpers.h"
+[/sourcecode]
+<p>The helper module contains the <code>hello_*</code> functions and a set of global objects present in wayland. The root global object is the <code>display</code> object, which represents the connection to the display server and is used for sending requests and receiving events. It is used in the code for running the main loop. The helpers module will be described in details in the next part of this tutorial.</p>
+[sourcecode language="c" firstline="10"]
+static const unsigned WIDTH = 320;
+static const unsigned HEIGHT = 200;
+static const unsigned CURSOR_WIDTH = 100;
+static const unsigned CURSOR_HEIGHT = 59;
+static const int32_t CURSOR_HOT_SPOT_X = 10;
+static const int32_t CURSOR_HOT_SPOT_Y = 35;
+[/sourcecode]
+<p>In this tutorial we display an image as the main window and another for the cursor. Their geometry is hardcoded. In a more general application, though, the values would be dinamically calculated.</p>
+[sourcecode language="c" firstline="19"]
+void on_button(uint32_t button)
+{
+    done = true;
+}
+[/sourcecode]
+<p>This is the button callback. Whenever a button is clicked, we set the done flag to true, which will allow us to leave the event loop in the <code>main()</code> function.</p>
+[sourcecode language="c" firstline="31"]
+    hello_setup_wayland();
+[/sourcecode]
+<p>We begin the application calling a setup function, which connects to the display server and requests a collection of global objects from the server, filling in proxy variables representing them.</p>
+[sourcecode language="c" firstline="33"]
+    image = open("images.bin", O_RDWR);
+[/sourcecode]
+<p>Then we open the image file. This image file contains the hardcoded images for the hello world application, already in a raw format for display: it's the pixel values for the main window, followed by the pixel values for the cursor.</p>
+[sourcecode language="c" firstline="40"]
+    pool = hello_create_memory_pool(image);
+[/sourcecode]
+<p>A main design philosophy of wayland is efficiency when dealing with graphics. Wayland accomplishes that by sharing memory areas between the client applications and the display server, so that no copies are involved. The essential element that is shared between client and server is called a shared memory pool, which is simply a memory area mmapped in both client and servers. Inside a memory pool, a set of images can be appended as buffer objects and all will be shared both by client and server.</p><p>In the hello world application we mmap our hardcoded image file. In a typical application, however, an empty memory pool would be created, for example, by creating a shared memory object with <code>shm_open()</code>, then gradually filled with dynamically constructed image buffers representing the widgets. While writing the hello world application I had to decide if I would create an empty memory pool and allocate buffers inside it, which is more usual and simpler to understand, or if I would use a less intuitive example of creating a pre built memory pool. I decided to go with the less intuitive example for an important reason: if you read the whole hello world source code, you'll notice that there's no memory copy operation anywhere. The image file is open once, and mmapped once. No extra copy is required. This was done to make clear that a wayland application can have maximal efficiency if carefully implemented.</p>
+[sourcecode language="c" firstline="41"]
+    surface = hello_create_surface();
+[/sourcecode]
+<p>Objects representing visible elements are called surfaces. Surfaces are rectangular areas, having position and size. Surface contents are filled by using buffer objects. During the lifetime of a surface, a couple of buffers will be attached as the surface contents and the server will be requested to redraw the surfaces. In the hello world example, the surface object is of type <code>wl_shell_surface</code>, which is used for creating top level windows.</p>
+[sourcecode language="c" firstline="42"]
+    buffer = hello_create_buffer(pool, WIDTH, HEIGHT);
+[/sourcecode]
+<p>The buffer object has the contents of a surface. Buffers are created inside of a memory pool (they are memory pool slices), so that they are shared by the client and the server. In our example, we do not create an empty buffer, instead we rely on the fact that the memory pool was previously filled with data and just pass the image dimensions as a parameter.</p>
+[sourcecode language="c" firstline="43"]
+    hello_bind_buffer(buffer, surface);
+[/sourcecode]
+<p>To make the buffer visible we need to bind buffer data to a surface, that is, we set the surface contents to the buffer data. The bind operation also commits the surface to the server. In wayland there's an idea of surface ownership: either the client owns the surface, so that it can be drawn (and the server keeps an old copy of it), or the server owns the surface, when the client can't change it because the server is drawing it on the screen. For transfering the ownership to the server, there's the commit request and for sending the ownership back to the client, the server sends a release event. In a generic application, the surface will be moved back and forth, but in the hello application it's enough to commit only once, as part of the bind operation.</p>
+[sourcecode language="c" firstline="44"]
+    hello_set_cursor_from_pool(pool, CURSOR_WIDTH,
+        CURSOR_HEIGHT, CURSOR_HOT_SPOT_X, CURSOR_HOT_SPOT_Y);
+[/sourcecode]
+<p>After setting up the main window, we configure the cursor. This configuration is required: the client must configure the cursor. Here we set the cursor to be the preset contents of the memory pool (implicitly right after the main window buffer). The helper module then creates a surface and a buffer for the cursor. I had to decide if I would hide the cursor configuration in the helper module or if I would explicitly add a high level step for it. I dedided to go with the second one to show the division of roles in wayland: the client is given a large control over what and how to draw.</p>
+[sourcecode language="c" firstline="46"]
+    hello_set_button_callback(surface, on_button);
+[/sourcecode]
+<p>The last configuration step is to set up a callback: associate a surface click with the on_button callback.</p>
+[sourcecode language="c" firstline="48"]
+    while (!done) {
+        if (wl_display_dispatch(display) < 0) {
+            perror("Main loop error");
+            done = true;
+        }
+    }
+[/sourcecode]
+<p>This calls the main loop with the global <code>display</code> object as the parameter. The main loop exits when the done flag is true, either because of an error, or because the button was clicked.</p>
+[sourcecode language="c" firstline="57"]
+    hello_free_cursor();
+    hello_free_buffer(buffer);
+    hello_free_surface(surface);
+    hello_free_memory_pool(pool);
+    close(image);
+    hello_cleanup_wayland();
+[/sourcecode]
+<p>The application finishes by cleaning up everything.</p>
+<p><strong>Conclusion</strong></p>
+<p>This was the first part of the hello world tutorial. A discussion abot what is wayland was presented and operation was described with help of a high level example. In the next part I'll describe the helper functions in detail.</p>
+<p><strong>References</strong></p>
+<p><br /> [1] http://wayland.freedesktop.org/architecture.html<br /> [2] http://mirror.linux.org.au/linux.conf.au/2013/ogv/The_real_story_behind_Wayland_and_X.ogv<br /> [3] http://cgit.freedesktop.org/wayland/wayland/tree/<br /> [4] http://wayland.freedesktop.org/docs/html/<br /> [5] http://cgit.freedesktop.org/wayland/wayland/tree/src<br /> [6] http://cgit.freedesktop.org/wayland/wayland/tree/protocol/wayland.xml<br /> [7] http://cgit.freedesktop.org/wayland/weston/tree/</p>
