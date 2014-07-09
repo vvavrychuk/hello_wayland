@@ -29,7 +29,7 @@ static const unsigned CURSOR_HEIGHT = 59;
 static const int32_t CURSOR_HOT_SPOT_X = 10;
 static const int32_t CURSOR_HOT_SPOT_Y = 35;
 
-volatile static bool done = false;
+static bool done = false;
 
 void on_button(uint32_t button)
 {
