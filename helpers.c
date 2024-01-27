@@ -321,6 +321,9 @@ static void pointer_button(void *data,
         callback(button);
 }
 
+static void frame (void *data,
+    struct wl_pointer *wl_pointer) { }
+
 static void pointer_axis(void *data,
     struct wl_pointer *wl_pointer, uint32_t time,
     uint32_t axis, wl_fixed_t value) { }
@@ -330,5 +333,6 @@ static const struct wl_pointer_listener pointer_listener = {
     .leave = pointer_leave,
     .motion = pointer_motion,
     .button = pointer_button,
+    .frame = frame,
     .axis = pointer_axis
 };
